@@ -4,8 +4,19 @@ from typing import Annotated
 import pandas as pd
 from pandas.api.types import is_numeric_dtype
 from fastapi.responses import FileResponse
+from fastapi.middleware.cors import CORSMiddleware
 
 app = FastAPI()
+
+origins = [
+    "http://localhost:3000"
+]
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=origins,
+    allow_methods=["*"],
+)
 
 @app.post("/plot")
 async def read_root(
