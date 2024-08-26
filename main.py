@@ -1,10 +1,11 @@
-from fastapi import FastAPI, UploadFile, Query
+from fastapi import FastAPI, UploadFile, Query, Form
 from umap.umap_ import UMAP
 from typing import Annotated
 import pandas as pd
 from pandas.api.types import is_numeric_dtype
 from fastapi.responses import FileResponse
 from fastapi.middleware.cors import CORSMiddleware
+import json
 
 app = FastAPI()
 
@@ -52,12 +53,13 @@ async def read_features(files: UploadFile):
     }
 
 @app.post('/comment')
-async def add_comment(files: UploadFile, comment: str, species: str,
-    lines: Annotated[list[str], Query()]):
+async def add_comment(files: UploadFile, species: str,
+    lines: Annotated[str, Form()]):
+
     df = pd.read_csv(files.file)
     df['comment'] = ''
 
-    for line in lines:
+    for line, comment in json.loads(lines).items():
         df.loc[(df['filename'] == line) & (df['Class'] == species), 'comment'] = comment
 
     df.to_csv('test.csv')
