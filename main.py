@@ -1,5 +1,5 @@
 from fastapi import FastAPI, UploadFile, Query, Form
-from umap.umap_ import UMAP
+from umap import UMAP
 from typing import Annotated
 import pandas as pd
 from pandas.api.types import is_numeric_dtype
@@ -57,10 +57,11 @@ async def add_comment(files: UploadFile, species: str,
     lines: Annotated[str, Form()]):
 
     df = pd.read_csv(files.file)
-    df['comment'] = ''
+    if 'comment' not in df.columns:
+        df['comment'] = ''
 
     for line, comment in json.loads(lines).items():
         df.loc[(df['filename'] == line) & (df['Class'] == species), 'comment'] = comment
 
-    df.to_csv('test.csv')
-    return FileResponse('test.csv')
+    df.to_csv('temp.csv', index=False)
+    return FileResponse('temp.csv')
