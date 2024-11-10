@@ -3,6 +3,7 @@ anyio==4.6.0
 click==8.1.7
 exceptiongroup==1.2.2
 fastapi==0.115.0
+fastapi-cli==0.0.5
 h11==0.14.0
 idna==3.10
 joblib==1.4.2

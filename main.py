@@ -6,9 +6,26 @@ from pandas.api.types import is_numeric_dtype
 from fastapi.responses import FileResponse
 from fastapi.middleware.cors import CORSMiddleware
 import json
+from pydantic_settings import BaseSettings
+from contextlib import asynccontextmanager
+import os
 
-app = FastAPI()
 
+class Settings(BaseSettings):
+    folder: str
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    yield
+    try:
+        os.remove('temp.csv')
+    except:
+        return
+
+
+settings = Settings()
+print(settings)
+app = FastAPI(lifespan=lifespan)
 origins = [
     "http://localhost:3000"
 ]
@@ -65,3 +82,8 @@ async def add_comment(files: UploadFile, species: str,
 
     df.to_csv('temp.csv', index=False)
     return FileResponse('temp.csv')
+
+@app.get('/wav')
+async def get_wav(species: str, filename: str):
+    f = settings.folder+'/'+species+'_audios/'+filename
+    return FileResponse(f)
