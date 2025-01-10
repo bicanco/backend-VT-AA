@@ -1,18 +1,21 @@
 from fastapi import FastAPI, UploadFile, Query, Form
 from umap import UMAP
-from typing import Annotated
+from typing import Annotated, Optional
 import pandas as pd
-from pandas.api.types import is_numeric_dtype
+from pandas.api.types import is_numeric_dtype, is_string_dtype
 from fastapi.responses import FileResponse
 from fastapi.middleware.cors import CORSMiddleware
 import json
-from pydantic_settings import BaseSettings
+from pydantic_settings import BaseSettings, SettingsConfigDict
 from contextlib import asynccontextmanager
 import os
+import re
 
 
 class Settings(BaseSettings):
-    folder: str
+    folder: Optional[str]
+
+    model_config = SettingsConfigDict(env_file='.env')
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -24,7 +27,7 @@ async def lifespan(app: FastAPI):
 
 
 settings = Settings()
-print(settings)
+
 app = FastAPI(lifespan=lifespan)
 origins = [
     "http://localhost:3000"
@@ -66,7 +69,8 @@ async def read_features(files: UploadFile):
     columns = df.columns.to_list()
     return {
         'features': list(map(lambda x: check_type(x, df), columns)),
-        'species': df.Class.unique().tolist()
+        'species': df.Class.unique().tolist(),
+        'showAudios': settings.folder == None
     }
 
 @app.post('/comment')
@@ -85,5 +89,34 @@ async def add_comment(files: UploadFile, species: str,
 
 @app.get('/wav')
 async def get_wav(species: str, filename: str):
-    f = settings.folder+'/'+species+'_audios/'+filename
+    if settings.folder == None or species == None or filename == None:
+        return
+    species = re.sub('[^A-Za-z0-9_]+', '', species)
+    filename = re.sub('[^A-Za-z0-9_]+', '', filename)
+    f = settings.folder+'/'+species+'_audios/'+filename+'.wav'
     return FileResponse(f)
+
+def check_numeric(column: str, df: pd.DataFrame):
+    if is_numeric_dtype(df[column]):
+        return  {'feature': column, 'max': df[column].max(),'min': df[column].min()}
+    else:
+        return None
+
+def check_string(column: str, df: pd.DataFrame):
+    if is_string_dtype(df[column]):
+        return {'feature': column, 'values': df[column].unique().tolist()}
+    else:
+        return None
+
+@app.post('/parallel')
+async def plot_parallel(files: UploadFile):
+    df = pd.read_csv(files.file)
+    columns = df.columns.to_list()
+
+    return {
+        'numericFeatures': list(filter(lambda x: x,
+            map(lambda x: check_numeric(x, df), columns))),
+        'nonNumericFeatures': list(filter(lambda x: x,
+            map(lambda x: check_string(x, df), columns))),
+        'data': df.to_dict('records')
+    }
