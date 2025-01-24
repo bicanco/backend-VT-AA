@@ -6,7 +6,7 @@ from pandas.api.types import is_numeric_dtype, is_string_dtype
 from fastapi.responses import FileResponse
 from fastapi.middleware.cors import CORSMiddleware
 import json
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic_settings import BaseSettings
 from contextlib import asynccontextmanager
 import os
 import re
@@ -14,8 +14,6 @@ import re
 
 class Settings(BaseSettings):
     folder: Optional[str]
-
-    model_config = SettingsConfigDict(env_file='.env')
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -39,29 +37,38 @@ app.add_middleware(
     allow_methods=["*"],
 )
 
-@app.post("/plot")
-async def read_root(
+@app.post("/projection")
+async def plot_projection(
     files: UploadFile,
-    species: str,
+    selectedClass: str,
     features: Annotated[list[str], Query()],
-    key: str
+    key: str,
+    normalise: bool = False
 ):
     df = pd.read_csv(files.file)
-    ds = df['Class'] == species
-    data = df.loc[ds][features]
+    ds = df['Class'] == selectedClass
+    data = df.loc[ds][features].dropna()
+    data = data.fillna('')
+    if normalise:
+        data = (data-data.min())/(data.max()-data.min())
     result = UMAP(n_components=2).fit_transform(data).astype('double')
     plot = []
     keys = df.loc[ds][key]
+    condition = 'colour' in df.columns
+    aux = df.loc[ds]['colour'].fillna('')
     for index in range(len(result)):
-        plot.append({
+        col = aux.iloc[index]
+        point = {
             'x': result[index][0],
             'y': result[index][1],
-            'text': keys.iloc[index]
-        })
+            'text': keys.iloc[index],
+            'colour': col if condition and col else None
+        }
+        plot.append(point)
     return plot
 
 def check_type(column: str, df: pd.DataFrame):
-    return {'feature': column, 'type': is_numeric_dtype(df[column])}
+    return {'feature': column, 'isNumeric': is_numeric_dtype(df[column])}
 
 @app.post('/open')
 async def read_features(files: UploadFile):
@@ -69,12 +76,11 @@ async def read_features(files: UploadFile):
     columns = df.columns.to_list()
     return {
         'features': list(map(lambda x: check_type(x, df), columns)),
-        'species': df.Class.unique().tolist(),
-        'showAudios': settings.folder == None
+        'classes': df.Class.unique().tolist(),
     }
 
 @app.post('/comment')
-async def add_comment(files: UploadFile, species: str,
+async def add_comment(files: UploadFile, selectedClass: str,
     lines: Annotated[str, Form()]):
 
     df = pd.read_csv(files.file)
@@ -82,29 +88,49 @@ async def add_comment(files: UploadFile, species: str,
         df['comment'] = ''
 
     for line, comment in json.loads(lines).items():
-        df.loc[(df['filename'] == line) & (df['Class'] == species), 'comment'] = comment
+        df.loc[(df['filename'] == line) & (df['Class'] == selectedClass), 'comment'] = comment
 
     df.to_csv('temp.csv', index=False)
     return FileResponse('temp.csv')
 
 @app.get('/wav')
-async def get_wav(species: str, filename: str):
-    if settings.folder == None or species == None or filename == None:
+async def get_wav(selectedClass: str, filename: str):
+    if settings.folder == None or selectedClass == None or filename == None:
         return
-    species = re.sub('[^A-Za-z0-9_]+', '', species)
-    filename = re.sub('[^A-Za-z0-9_]+', '', filename)
-    f = settings.folder+'/'+species+'_audios/'+filename+'.wav'
-    return FileResponse(f)
+    selectedClass = re.sub('[^A-Za-z0-9_]+', '', selectedClass)
+    filename = re.sub('[^A-Za-z0-9_.]+', '', filename)
+    filename = re.sub('\\.{2,}', '.', filename)
+    filename = settings.folder+'/'+selectedClass+'_audios/'+filename
+    if os.path.isfile(filename):
+        return FileResponse(filename)
+    else:
+        return
 
-def check_numeric(column: str, df: pd.DataFrame):
+
+def check_numeric(column: str, df: pd.DataFrame, classes: list[str]):
     if is_numeric_dtype(df[column]):
-        return  {'feature': column, 'max': df[column].max(),'min': df[column].min()}
+        col = {'feature': column}
+        if len(classes) > 1:
+            for item in classes:
+                partial = df.loc[df['Class'] == item, column]
+                col[item] = {'max': partial.max(),'min': partial.min()}
+        else:
+            col[classes[0]] = {'max': df[column].max(),'min': df[column].min()}
+        return col
     else:
         return None
 
-def check_string(column: str, df: pd.DataFrame):
+def check_string(column: str, df: pd.DataFrame, classes: list[str]):
     if is_string_dtype(df[column]):
-        return {'feature': column, 'values': df[column].unique().tolist()}
+        col = {'feature': column, 'values': df[column].unique().tolist()}
+        if len(classes) > 1:
+            for item in classes:
+                partial = df.loc[df['Class'] == item, column].unique()
+                col[item] = partial.tolist()
+        else:
+            values = list(filter(lambda x: x, df[column].unique().tolist()))
+            col[classes[0]] = values
+        return col
     else:
         return None
 
@@ -112,11 +138,32 @@ def check_string(column: str, df: pd.DataFrame):
 async def plot_parallel(files: UploadFile):
     df = pd.read_csv(files.file)
     columns = df.columns.to_list()
+    classes = df['Class'].unique()
 
+    df = df.fillna('')
     return {
         'numericFeatures': list(filter(lambda x: x,
-            map(lambda x: check_numeric(x, df), columns))),
+            map(lambda x: check_numeric(x, df, classes), columns))),
         'nonNumericFeatures': list(filter(lambda x: x,
-            map(lambda x: check_string(x, df), columns))),
+            map(lambda x: check_string(x, df, classes), columns))),
         'data': df.to_dict('records')
     }
+
+def setColors(df: pd.DataFrame, key: str, value: str, colour: str):
+    df[df[key] == value] = colour
+
+@app.post('/colours')
+async def export_colours(files: UploadFile, colours: Annotated[str, Form()], key: Annotated[str, Form()]):
+    df = pd.read_csv(files.file)
+    colours = json.loads(colours)
+    if isinstance(colours, dict):
+        return
+    elif isinstance(colours, list):
+        for item in colours:
+            (value, colour) = item
+            df.loc[df[key] == value, 'colour'] = colour
+    else:
+        return
+
+    df.to_csv('temp.csv', index=False)
+    return FileResponse('temp.csv')
