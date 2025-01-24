@@ -137,10 +137,11 @@ def check_string(column: str, df: pd.DataFrame, classes: list[str]):
 @app.post('/parallel')
 async def plot_parallel(files: UploadFile):
     df = pd.read_csv(files.file)
-    columns = df.columns.to_list()
     classes = df['Class'].unique()
 
     df = df.fillna('')
+    df = df.drop(columns=['filename', 'colour'])
+    columns = df.columns.to_list()
     return {
         'numericFeatures': list(filter(lambda x: x,
             map(lambda x: check_numeric(x, df, classes), columns))),
@@ -156,9 +157,7 @@ def setColors(df: pd.DataFrame, key: str, value: str, colour: str):
 async def export_colours(files: UploadFile, colours: Annotated[str, Form()], key: Annotated[str, Form()]):
     df = pd.read_csv(files.file)
     colours = json.loads(colours)
-    if isinstance(colours, dict):
-        return
-    elif isinstance(colours, list):
+    if isinstance(colours, list):
         for item in colours:
             (value, colour) = item
             df.loc[df[key] == value, 'colour'] = colour
