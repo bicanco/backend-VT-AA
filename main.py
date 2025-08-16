@@ -55,7 +55,10 @@ async def plot_projection(
     plot = []
     keys = df.loc[ds][key]
     condition = 'colour' in df.columns
-    aux = df.loc[ds]['colour'].fillna('')
+    if condition:
+        aux = df.loc[ds]['colour'].fillna('')
+    else:
+        aux = df.loc[ds].fillna('')
     for index in range(len(result)):
         col = aux.iloc[index]
         point = {
